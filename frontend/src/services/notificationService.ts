@@ -1,62 +1,105 @@
 import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 
-// Dùng lại interface Task để code được nhất quán
-interface Task {
-    task_id: number;
+// Interface để định nghĩa kiểu dữ liệu cho Task, giúp code nhất quán
+interface TaskForNotification {
+    id: number;
     title: string;
     due_date: string | null;
+    is_completed?: boolean;
 }
 
-// Lên lịch một thông báo
-export const schedulePushNotification = async (task: Task) => {
-    // Không làm gì nếu không có ngày hết hạn
-    if (!task.due_date) {
-        console.log(`Bỏ qua lên lịch cho task ID: ${task.task_id} vì không có due_date.`);
-        return;
-    }
+// Cấu hình cách thông báo hiển thị khi ứng dụng đang chạy
+Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+    }),
+});
 
+// Hàm yêu cầu quyền
+export const requestPermissions = async () => {
+    if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+            name: 'default',
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 250, 250, 250],
+            lightColor: '#FF231F7C',
+        });
+    }
+    const { status } = await Notifications.requestPermissionsAsync();
+    if (status !== 'granted') {
+        alert('Bạn cần cấp quyền thông báo để nhận được lời nhắc công việc!');
+        return false;
+    }
+    return true;
+};
+
+// Hàm lên lịch một thông báo
+export const scheduleNotification = async (task: TaskForNotification) => {
+    if (!task.due_date) { return; }
     const dueDate = new Date(task.due_date);
+    if (isNaN(dueDate.getTime())) { return; }
 
-    // Kiểm tra xem thời gian có hợp lệ không
-    if (isNaN(dueDate.getTime())) {
-        console.log(`Bỏ qua lên lịch cho task ID: ${task.task_id} vì due_date không hợp lệ.`);
-        return;
-    }
+    const triggerTimestamp = dueDate.getTime() - 15 * 60 * 1000; // Nhắc trước 15 phút
+    const seconds = (triggerTimestamp - Date.now()) / 1000;
 
-    // Thông báo trước 15 phút
-    const trigger = new Date(dueDate.getTime() - 15 * 60 * 1000);
-
-    // Chỉ lên lịch nếu thời gian trigger ở trong tương lai
-    if (trigger > new Date()) {
+    if (seconds > 0) {
         try {
-            // Dùng task_id làm định danh để có thể hủy hoặc cập nhật sau này
-            const identifier = String(task.task_id);
-
-            await Notifications.scheduleNotificationAsync({
-                identifier,
+            const notificationId = await Notifications.scheduleNotificationAsync({
                 content: {
-                    title: "Công việc sắp đến hạn! 提醒", // Reminder
+                    title: "Công việc sắp đến hạn!",
                     body: task.title,
-                    data: { taskId: task.task_id }, // Gửi kèm dữ liệu nếu cần
+                    // Dữ liệu đính kèm bây giờ là một đối tượng
+                    data: { taskId: task.id },
                 },
-                trigger,
+                trigger: { seconds },
             });
-            console.log(`ĐÃ LÊN LỊCH thông báo cho task ID: ${identifier} vào lúc ${trigger.toLocaleString()}`);
-        } catch (e) {
-            console.error("Lỗi khi lên lịch thông báo:", e);
+            console.log(`Đã lên lịch thông báo cho: "${task.title}" (ID: ${task.id})`);
+        } catch (error) {
+            console.error("Lỗi khi lên lịch thông báo:", error);
         }
-    } else {
-        console.log(`Bỏ qua lên lịch cho task ID: ${task.task_id} vì thời gian đã qua.`);
     }
 };
 
-// Hủy một thông báo đã được lên lịch
-export const cancelPushNotification = async (taskId: number) => {
+// --- HÀM ĐÃ SỬA THEO ĐÚNG LOG BẠN GỬI ---
+export const cancelNotificationForTask = async (taskId: number) => {
     try {
-        const identifier = String(taskId);
-        await Notifications.cancelScheduledNotificationAsync(identifier);
-        console.log(`ĐÃ HỦY thông báo cho task ID: ${identifier}`);
-    } catch (e) {
-        console.error("Lỗi khi hủy thông báo:", e)
+        const scheduledNotifications = await Notifications.getAllScheduledNotificationsAsync();
+
+        for (const notif of scheduledNotifications) {
+            // Lấy chuỗi JSON từ `dataString` (hoặc `data` trên một số nền tảng)
+            const dataString = notif.content.dataString || JSON.stringify(notif.content.data);
+
+            if (dataString) {
+                try {
+                    // Phân tích chuỗi JSON để lấy đối tượng data
+                    const data = JSON.parse(dataString);
+
+                    // So sánh taskId
+                    if (data.taskId === taskId) {
+                        await Notifications.cancelScheduledNotificationAsync(notif.identifier);
+                        console.log(`Đã hủy thành công thông báo cho Task ID: ${taskId}`);
+                    }
+                } catch (e) {
+                    // Bỏ qua nếu không parse được
+                }
+            }
+        }
+    } catch (error) {
+        console.error(`Lỗi trong quá trình hủy thông báo cho task ID ${taskId}:`, error);
     }
+};
+
+// Hàm mới để đồng bộ/tái tạo tất cả thông báo
+export const recreateAllNotifications = async (tasks: TaskForNotification[]) => {
+    await Notifications.cancelAllScheduledNotificationsAsync();
+    console.log('Đã hủy các thông báo cũ, bắt đầu tái tạo...');
+    for (const task of tasks) {
+        if (!task.is_completed && task.due_date) {
+            await scheduleNotification(task);
+        }
+    }
+    console.log('Hoàn tất việc tái tạo thông báo.');
 };

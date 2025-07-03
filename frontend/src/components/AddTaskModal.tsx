@@ -5,8 +5,17 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { format } from 'date-fns';
 import { Picker } from '@react-native-picker/picker';
 import { useCategories } from '@/contexts/CategoryContext';
-// --- DÒNG MỚI: Import service thông báo ---
-import { schedulePushNotification } from '@/services/notificationService';
+
+// Interface cho Task để định nghĩa kiểu dữ liệu
+interface Task {
+    task_id: number;
+    title: string;
+    description: string | null;
+    is_completed: boolean;
+    due_date: string | null;
+    priority: number;
+    category_id?: number | null;
+}
 
 // Component PriorityButton của bạn (giữ nguyên)
 const PriorityButton = ({ label, level, selectedPriority, onSelect }: { label: string; level: number; selectedPriority: number; onSelect: (level: number) => void; }) => (
@@ -29,11 +38,12 @@ const PriorityButton = ({ label, level, selectedPriority, onSelect }: { label: s
     </Pressable>
 );
 
-// Interface AddTaskModalProps của bạn (giữ nguyên)
+// --- THAY ĐỔI 1: SỬA LẠI ĐỊNH NGHĨA PROP onTaskAdded ---
+// Bây giờ nó sẽ nhận một tham số là công việc mới được tạo
 interface AddTaskModalProps {
     visible: boolean;
     onClose: () => void;
-    onTaskAdded: () => void;
+    onTaskAdded: (newTask: Task) => void;
 }
 
 export default function AddTaskModal({ visible, onClose, onTaskAdded }: AddTaskModalProps) {
@@ -71,7 +81,7 @@ export default function AddTaskModal({ visible, onClose, onTaskAdded }: AddTaskM
         }
     };
 
-    // Hàm handleAddTask của bạn được sửa lại để gọi schedulePushNotification
+    // --- THAY ĐỔI 2: SỬA LẠI HÀM handleAddTask ---
     const handleAddTask = async () => {
         if (!title.trim()) {
             alert('Tiêu đề công việc không được để trống.');
@@ -88,10 +98,11 @@ export default function AddTaskModal({ visible, onClose, onTaskAdded }: AddTaskM
             };
             const response = await api.post('/tasks', payload);
 
-            // --- DÒNG MỚI: Lên lịch thông báo cho công việc vừa tạo ---
-            await schedulePushNotification(response.data);
+            // Gửi dữ liệu của công việc vừa tạo về cho HomeScreen
+            if (response.data) {
+                onTaskAdded(response.data);
+            }
 
-            onTaskAdded();
             handleClose();
         } catch (error) {
             console.error('Lỗi khi thêm công việc:', error);
@@ -101,7 +112,7 @@ export default function AddTaskModal({ visible, onClose, onTaskAdded }: AddTaskM
         }
     };
 
-    // Hàm handleClose của bạn được sửa lại để reset tất cả state
+    // Hàm handleClose của bạn được giữ nguyên
     const handleClose = () => {
         setTitle('');
         setDescription('');
